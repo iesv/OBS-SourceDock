@@ -14,6 +14,7 @@
 #include <QFont>
 #include <QFontDialog>
 #include <QColorDialog>
+#include <QSinglePointEvent>
 
 #include "media-control.hpp"
 #include "source-dock-settings.hpp"
@@ -934,7 +935,7 @@ OBSEventFilter *SourceDock::BuildEventFilter()
 		case QEvent::MouseMove:
 		case QEvent::Enter:
 		case QEvent::Leave:
-			return this->HandleMouseMoveEvent(static_cast<QMouseEvent *>(event));
+			return this->HandleMouseMoveEvent(event);
 
 		case QEvent::Wheel:
 			return this->HandleMouseWheelEvent(static_cast<QWheelEvent *>(event));
@@ -978,7 +979,7 @@ static int TranslateQtKeyboardEventModifiers(QInputEvent *event, bool mouseEvent
 	return obsModifiers;
 }
 
-static int TranslateQtMouseEventModifiers(QMouseEvent *event)
+static int TranslateQtMouseEventModifiers(QSinglePointEvent *event)
 {
 	int modifiers = TranslateQtKeyboardEventModifiers(event, true);
 
@@ -1140,17 +1141,21 @@ static bool HandleSceneMouseMoveEvent(obs_scene_t *scene, obs_sceneitem_t *item,
 	return true;
 }
 
-bool SourceDock::HandleMouseMoveEvent(QMouseEvent *event)
+bool SourceDock::HandleMouseMoveEvent(QEvent *event)
 {
 	if (!event)
 		return false;
+	const auto type = event->type();
+	if (type != QEvent::MouseMove && type != QEvent::Enter && type != QEvent::Leave)
+		return false;
 	if (!source)
 		return true;
-	if (event->buttons() == Qt::LeftButton && event->modifiers().testFlag(Qt::ControlModifier)) {
+	auto *moveEvent = type == QEvent::MouseMove ? static_cast<QMouseEvent *>(event) : nullptr;
+	if (moveEvent && moveEvent->buttons() == Qt::LeftButton && moveEvent->modifiers().testFlag(Qt::ControlModifier)) {
 
 		QSize size = preview->size() * preview->devicePixelRatioF();
-		scrollX -= float(event->pos().x() - scrollingFromX) / size.width();
-		scrollY -= float(event->pos().y() - scrollingFromY) / size.height();
+		scrollX -= float(moveEvent->pos().x() - scrollingFromX) / size.width();
+		scrollY -= float(moveEvent->pos().y() - scrollingFromY) / size.height();
 		if (scrollX < 0.0f)
 			scrollX = 0.0;
 		if (scrollX > 1.0f)
@@ -1159,18 +1164,21 @@ bool SourceDock::HandleMouseMoveEvent(QMouseEvent *event)
 			scrollY = 0.0;
 		if (scrollY > 1.0f)
 			scrollY = 1.0f;
-		scrollingFromX = event->pos().x();
-		scrollingFromY = event->pos().y();
+		scrollingFromX = moveEvent->pos().x();
+		scrollingFromY = moveEvent->pos().y();
 		return true;
 	}
 
 	struct obs_mouse_event mouseEvent = {};
 
-	bool mouseLeave = event->type() == QEvent::Leave;
+	bool mouseLeave = type == QEvent::Leave;
 
 	if (!mouseLeave) {
-		mouseEvent.modifiers = TranslateQtMouseEventModifiers(event);
-		mouseLeave = !GetSourceRelativeXY(event->pos().x(), event->pos().y(), mouseEvent.x, mouseEvent.y);
+		// MouseMove and Enter are QSinglePointEvents; Leave is only a QEvent.
+		auto *pointerEvent = static_cast<QSinglePointEvent *>(event);
+		const QPoint pos = pointerEvent->position().toPoint();
+		mouseEvent.modifiers = TranslateQtMouseEventModifiers(pointerEvent);
+		mouseLeave = !GetSourceRelativeXY(pos.x(), pos.y(), mouseEvent.x, mouseEvent.y);
 	}
 
 	obs_source_send_mouse_move(source, &mouseEvent, mouseLeave);

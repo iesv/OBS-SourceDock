@@ -126,7 +126,7 @@ private:
 	bool GetSourceRelativeXY(int mouseX, int mouseY, int &x, int &y);
 
 	bool HandleMouseClickEvent(QMouseEvent *event);
-	bool HandleMouseMoveEvent(QMouseEvent *event);
+	bool HandleMouseMoveEvent(QEvent *event);
 	bool HandleMouseWheelEvent(QWheelEvent *event);
 	bool HandleFocusEvent(QFocusEvent *event);
 	bool HandleKeyEvent(QKeyEvent *event);

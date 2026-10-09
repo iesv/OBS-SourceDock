@@ -7,7 +7,7 @@ else()
 endif()
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/common/bootstrap.cmake" NO_POLICY_SCOPE)
 
-project(${_name} VERSION ${_version})
+project(${_name} VERSION ${PLUGIN_VERSION_NUMERIC})
 
 include(compilerconfig)
 include(defaults)

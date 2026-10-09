@@ -1,0 +1,71 @@
+name: Source Dock 0.5.1-1
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [fix/f1-0.5.1-1]
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows x64
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Build and install
+        shell: pwsh
+        run: .github/scripts/Build-Windows.ps1 -Target x64 -Configuration RelWithDebInfo
+      - name: Verify plugin version
+        shell: pwsh
+        run: |
+          $dll = Get-Item release/RelWithDebInfo/source-dock/bin/64bit/source-dock.dll
+          if ($dll.VersionInfo.ProductVersion -ne '0.5.1-1') {
+            throw "Unexpected version: $($dll.VersionInfo.ProductVersion)"
+          }
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          Compress-Archive -Path release/RelWithDebInfo/source-dock -DestinationPath artifacts/source-dock-0.5.1-1-windows-x64.zip
+          Get-FileHash artifacts/*.zip -Algorithm SHA256 | Format-List | Out-File artifacts/SHA256.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: source-dock-0.5.1-1-windows-x64
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 30
+
+  macos:
+    name: macOS Universal (Intel and Apple Silicon)
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Configure
+        run: cmake --preset macos -DCMAKE_OSX_ARCHITECTURES='arm64;x86_64' -DPLUGIN_BUILD_NUMBER=1
+      - name: Build
+        run: cmake --build --preset macos --config RelWithDebInfo --parallel
+      - name: Verify and package
+        run: |
+          set -euo pipefail
+          plugin=build_macos/rundir/RelWithDebInfo/source-dock.plugin
+          binary="$plugin/Contents/MacOS/source-dock"
+          lipo -verify_arch arm64 x86_64 "$binary"
+          grep -F '#define PROJECT_VERSION "0.5.1-1"' version.h
+          codesign --verify --deep --strict "$plugin"
+          mkdir -p artifacts
+          ditto -c -k --sequesterRsrc --keepParent "$plugin" artifacts/source-dock-0.5.1-1-macos-universal.zip
+          shasum -a 256 artifacts/*.zip > artifacts/SHA256.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: source-dock-0.5.1-1-macos-universal
+          path: artifacts/*
+          if-no-files-found: error
+          retention-days: 30
