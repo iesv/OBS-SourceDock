@@ -20,7 +20,7 @@ References: [Qt event types](https://doc.qt.io/qt-6/qevent.html), [QEnterEvent](
 - The unpatched upstream code fails for both a plain Leave and a typed Enter at `source-dock.cpp:937`, with UBSan reporting an invalid downcast to `QMouseEvent`. Both diagnostic runs exit with code 1.
 - Leak detection is disabled for this headless Qt/libobs harness. No graphics renderer or OBS frontend session is started. No Windows or macOS interactive OBS F1 reproduction has been performed.
 
-Windows x64 and macOS Universal builds are produced by `.github/workflows/fix-build.yaml`. The Windows job verifies the DLL's textual product version. The macOS job verifies both arm64 and x86_64 slices and the bundle's ad-hoc signature. The dependency baseline remains the upstream OBS 31.1.0 SDK and Qt dependency set; the reported OBS version is 32.0.4.
+Windows x64 and macOS Universal builds were produced by `.github/workflows/fix-build.yaml` at commit `9a40cbec5668b7acdcd4f29e94cd80c2241dc23d`. The Windows job verifies the DLL's textual product version. The resulting DLL also loaded successfully on Windows with OBS 32.0.4 dependencies and returned the module name `SourceDock`. The macOS job verifies both arm64 and x86_64 slices and the bundle's ad-hoc signature. The dependency baseline remains the upstream OBS 31.1.0 SDK and Qt dependency set; the reported OBS version is 32.0.4.
 
 ## Version and packages
 
@@ -29,7 +29,25 @@ The release, OBS startup log and Windows textual resource version are `0.5.1-1`.
 - `source-dock-0.5.1-1-windows-x64.zip`: `source-dock/bin/64bit/source-dock.dll`, debug symbols and locale resources.
 - `source-dock-0.5.1-1-macos-universal.zip`: `source-dock.plugin`, supporting Intel and Apple Silicon, macOS 12 or later. It is ad-hoc signed, without Developer ID signing or notarization.
 
-For an existing Windows installation, close OBS, back up the existing `source-dock.dll`, and replace it with the DLL from the Windows archive. Retain the existing locale data or use the archive's `source-dock/data` files. Keep one installed copy of Source Dock. On macOS, close OBS and replace `source-dock.plugin` in `~/Library/Application Support/obs-studio/plugins` with the archive's bundle.
+## Installation
+
+For an existing OBS Studio 32 installation on Windows using the default Program Files location:
+
+1. Close OBS and back up the existing plugin DLL.
+2. Extract `source-dock/bin/64bit/source-dock.dll` from the Windows archive and use it to replace `C:\Program Files\obs-studio\obs-plugins\64bit\source-dock.dll`.
+3. Keep the existing locale files in `C:\Program Files\obs-studio\data\obs-plugins\source-dock`, or copy the archive's `source-dock/data` contents into that directory.
+4. Reopen OBS. The plugin startup log should report `0.5.1-1`.
+
+For a fresh OBS Studio 32 installation, the [OBS plugins guide](https://obsproject.com/kb/plugins-guide) recommends `C:\ProgramData\obs-studio\plugins`. Extract the archive's complete `source-dock` folder there, producing these paths:
+
+```text
+C:\ProgramData\obs-studio\plugins\source-dock\bin\64bit\source-dock.dll
+C:\ProgramData\obs-studio\plugins\source-dock\data\locale\en-US.ini
+```
+
+Keep one installed copy of Source Dock. If OBS is installed to a custom location, use that installation's plugin and data directories for an existing-installation update. These Windows instructions target OBS Studio 32; later OBS versions may use a different plugin layout.
+
+On macOS, close OBS and replace `source-dock.plugin` in `~/Library/Application Support/obs-studio/plugins` with the archive's bundle.
 
 For interactive acceptance testing, reopen OBS with Source Dock enabled and check F1 while the pointer is inside and outside the dock, open and close dialogs, then check enter/leave, browser-source interaction, scrolling, and Ctrl-left dragging.
 
