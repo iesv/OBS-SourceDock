@@ -55,7 +55,7 @@ jobs:
       - name: Verify and package
         run: |
           set -euo pipefail
-          plugin=build_macos/rundir/RelWithDebInfo/source-dock.plugin
+          plugin=build_macos/RelWithDebInfo/source-dock.plugin
           binary="$plugin/Contents/MacOS/source-dock"
           lipo "$binary" -verify_arch arm64 x86_64
           grep -F '#define PROJECT_VERSION "0.5.1-1"' version.h
