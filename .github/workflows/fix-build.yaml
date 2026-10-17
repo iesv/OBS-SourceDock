@@ -1,0 +1,216 @@
+name: Source Dock 0.5.1-2
+
+on:
+  workflow_dispatch:
+    inputs:
+      scope:
+        description: Build packages, test macOS docking, or update a platform installer
+        type: choice
+        default: all
+        options: [all, packages-only, stress-only, installer-only, windows-installer-only]
+      source:
+        description: Source used by the native macOS dock stress test
+        type: choice
+        default: browser
+        options: [browser, color, both]
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows x64
+    if: inputs.scope == 'all' || inputs.scope == 'packages-only'
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Seed previous distribution output
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist/previous-build -Force | Out-Null
+          Set-Content dist/previous-build/stale.txt 'Old build output must be removed'
+      - name: Build and install
+        shell: pwsh
+        run: .github/scripts/Build-Windows.ps1 -Target x64 -Configuration RelWithDebInfo
+      - name: Verify plugin version
+        shell: pwsh
+        run: |
+          if (!(Test-Path dist -PathType Container) -or @(Get-ChildItem dist -Force).Count -ne 0) {
+            throw 'The build did not clear the previous dist contents'
+          }
+          $dll = Get-Item release/RelWithDebInfo/source-dock/bin/64bit/source-dock.dll
+          if ($dll.VersionInfo.ProductVersion -ne '0.5.1-2' -or $dll.VersionInfo.FileVersion -ne '0.5.1-2') {
+            throw "Unexpected version: $($dll.VersionInfo.ProductVersion)"
+          }
+      - name: Package
+        shell: pwsh
+        run: |
+          python packaging/package.py windows --payload release/RelWithDebInfo/source-dock
+      - name: Test Windows installer and countdown
+        shell: pwsh
+        run: |
+          $testPackage = Join-Path $env:RUNNER_TEMP 'source-dock-package'
+          Expand-Archive dist/source-dock-0.5.1-2-windows-x64.zip $testPackage
+          ./packaging/test-windows.ps1 -PackageDirectory $testPackage
+          python packaging/test-countdown.py windows (Join-Path $testPackage 'install.bat')
+      - uses: actions/upload-artifact@v4
+        with:
+          name: source-dock-0.5.1-2-windows-x64
+          path: dist/*.zip
+          if-no-files-found: error
+          retention-days: 30
+
+  macos_stress:
+    name: macOS native OBS dock stress (${{ matrix.source }})
+    if: inputs.scope == 'all' || inputs.scope == 'stress-only'
+    runs-on: macos-15
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        source: ${{ inputs.source == 'both' && fromJSON('["color", "browser"]') || fromJSON(format('["{0}"]', inputs.source || 'browser')) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Configure test-only plugin
+        run: cmake --preset macos -DCMAKE_OSX_ARCHITECTURES="$(uname -m)" -DSOURCE_DOCK_MAC_STRESS_DRIVER=ON
+      - name: Build test-only plugin
+        run: cmake --build --preset macos --config RelWithDebInfo --parallel
+      - name: Stress actual OBS on native Cocoa
+        env:
+          STRESS_SOURCE: ${{ matrix.source }}
+        run: python3 tests/mac-dock-stress/run.py --source "$STRESS_SOURCE" --plugin build_macos/RelWithDebInfo/source-dock.plugin --work "$RUNNER_TEMP/mac-dock-stress"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mac-dock-stress-report-${{ matrix.source }}
+          path: |
+            ${{ runner.temp }}/mac-dock-stress/report.json
+            ${{ runner.temp }}/mac-dock-stress/*.log
+            ${{ runner.temp }}/mac-dock-stress/*.png
+            ${{ runner.temp }}/mac-dock-stress/*sample.txt
+            ${{ runner.temp }}/mac-dock-stress/obs-logs/
+          if-no-files-found: warn
+          retention-days: 1
+
+  macos:
+    name: macOS Universal (Intel and Apple Silicon)
+    if: inputs.scope == 'all' || inputs.scope == 'packages-only'
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check macOS installer source syntax
+        run: |
+          /bin/bash -n packaging/macos/install.sh
+          /bin/bash -n packaging/test-macos.sh
+      - name: Seed previous distribution output
+        run: |
+          mkdir -p dist/previous-build
+          touch dist/previous-build/stale.txt
+      - name: Configure
+        run: cmake --preset macos -DCMAKE_OSX_ARCHITECTURES='arm64;x86_64' -DPLUGIN_BUILD_NUMBER=2
+      - name: Build
+        run: cmake --build --preset macos --config RelWithDebInfo --parallel
+      - name: Verify and package
+        run: |
+          set -euo pipefail
+          python3 -c "from pathlib import Path; assert not any(Path('dist').iterdir()), 'Previous dist output was not removed'"
+          plugin=build_macos/RelWithDebInfo/source-dock.plugin
+          binary="$plugin/Contents/MacOS/source-dock"
+          lipo "$binary" -verify_arch arm64 x86_64
+          grep -F '#define PROJECT_VERSION "0.5.1-2"' version.h
+          python3 -c "import plistlib; from pathlib import Path; p=Path('build_macos/RelWithDebInfo/source-dock.plugin/Contents'); info=plistlib.loads((p/'Info.plist').read_bytes()); assert info['CFBundleShortVersionString']=='0.5.1'; assert info['CFBundleVersion']=='2'; assert b'0.5.1-2' in (p/'MacOS/source-dock').read_bytes()"
+          codesign --verify --deep --strict "$plugin"
+          python3 packaging/package.py macos --payload "$plugin"
+      - name: Test macOS installer and countdown
+        run: |
+          set -euo pipefail
+          test_package="$RUNNER_TEMP/source-dock-package"
+          mkdir -p "$test_package"
+          ditto -x -k dist/source-dock-0.5.1-2-macos-universal.zip "$test_package"
+          test -x "$test_package/install.sh"
+          /bin/bash packaging/test-macos.sh "$test_package"
+          python3 packaging/test-countdown.py macos "$test_package/install.sh"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: source-dock-0.5.1-2-macos-universal
+          path: dist/*.zip
+          if-no-files-found: error
+          retention-days: 30
+
+  macos_installer:
+    name: macOS installer and quarantine removal
+    if: inputs.scope == 'installer-only'
+    runs-on: macos-15
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Download existing native payload and update installer
+        run: |
+          set -euo pipefail
+          payload="$RUNNER_TEMP/source-dock-native-payload.zip"
+          curl --fail --location --retry 3 \
+            "https://github.com/${GITHUB_REPOSITORY}/releases/download/0.5.1-2/source-dock-0.5.1-2-macos-universal.zip" \
+            --output "$payload"
+          cmake -P cmake/common/clean-dist.cmake
+          python3 packaging/package.py macos --payload "$payload"
+      - name: Test macOS installer, quarantine removal and countdown
+        run: |
+          set -euo pipefail
+          test_package="$RUNNER_TEMP/source-dock-package"
+          mkdir -p "$test_package"
+          ditto -x -k dist/source-dock-0.5.1-2-macos-universal.zip "$test_package"
+          test -x "$test_package/install.sh"
+          lipo "$test_package/source-dock.plugin/Contents/MacOS/source-dock" -verify_arch arm64 x86_64
+          /bin/bash -n "$test_package/install.sh"
+          /bin/bash -n packaging/test-macos.sh
+          /bin/bash packaging/test-macos.sh "$test_package"
+          python3 packaging/test-countdown.py macos "$test_package/install.sh"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: source-dock-0.5.1-2-macos-universal
+          path: dist/*.zip
+          if-no-files-found: error
+          retention-days: 1
+
+  windows_installer:
+    name: Windows single BAT installer
+    if: inputs.scope == 'windows-installer-only'
+    runs-on: windows-2022
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      - name: Download native payload and package the single BAT
+        shell: pwsh
+        run: |
+          $payload = Join-Path $env:RUNNER_TEMP 'source-dock-native-payload.zip'
+          Invoke-WebRequest "https://github.com/$env:GITHUB_REPOSITORY/releases/download/0.5.1-2/source-dock-0.5.1-2-windows-x64.zip" -OutFile $payload
+          cmake -P cmake/common/clean-dist.cmake
+          if ($LASTEXITCODE -ne 0) { throw 'Could not clear dist' }
+          python packaging/package.py windows --payload $payload
+          if ($LASTEXITCODE -ne 0) { throw 'Packaging failed' }
+      - name: Test actual BAT installation and countdown
+        shell: pwsh
+        run: |
+          $testPackage = Join-Path $env:RUNNER_TEMP 'source-dock-package'
+          Expand-Archive dist/source-dock-0.5.1-2-windows-x64.zip $testPackage
+          ./packaging/test-windows.ps1 -PackageDirectory $testPackage
+          python packaging/test-countdown.py windows (Join-Path $testPackage 'install.bat')
+          if ($LASTEXITCODE -ne 0) { throw 'Countdown test failed' }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: source-dock-0.5.1-2-windows-x64
+          path: dist/*.zip
+          if-no-files-found: error
+          retention-days: 1
